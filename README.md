@@ -6,6 +6,7 @@ This bot was designed for admins to get the below information within discord wit
 - Show Structure Limits per clan (!structures < clan name >)
 - Show structure count for all clans (!allclanstructures)
 - List all players within a specific clan (!clan < clan name >)
+- Get player info (Online Status, Level, Clan, Last Seen, TP location) (!player < name >)
 
 ## Known Issues
 - TP Player list may list recently disconnected players
