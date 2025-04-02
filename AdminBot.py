@@ -126,21 +126,28 @@ async def get_online_player_positions(db_path):
             conn.close()
 
 async def get_all_characters_with_positions(db_path):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    query = """
-    SELECT c.char_name, ap.x, ap.y, ap.z
-    FROM characters c
-    JOIN actor_position ap ON c.id = ap.id
-    ORDER BY c.char_name
-    """
-    cursor.execute(query)
-    results = cursor.fetchall()
-    
-    conn.close()
-    print(f"Found {len(results)} characters with positions")
-    return results
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        query = """
+        SELECT c.char_name, ap.x, ap.y, ap.z
+        FROM characters c
+        JOIN actor_position ap ON c.id = ap.id
+        ORDER BY c.char_name
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        print(f"Found {len(results)} characters with positions")
+        return results
+    except Exception as e:
+        print(f"Error in get_all_characters_with_positions: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 def format_positions(results):
     if not results:
@@ -160,6 +167,7 @@ def format_positions(results):
 # Clan & Structure Functions
 #-------------------------
 async def get_structure_count(db_path, clan_name):
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -195,15 +203,18 @@ async def get_structure_count(db_path, clan_name):
         for structure_type, count in structure_types:
             print(f"  {structure_type.split('.')[-1]}: {count}")
 
-        conn.close()
         return structure_count
     except Exception as e:
         print(f"Error in get_structure_count: {e}")
         print(f"Clan name: {clan_name}")
         print(f"Database path: {db_path}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 async def get_clan_members(db_path, clan_name):
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -225,15 +236,18 @@ async def get_clan_members(db_path, clan_name):
         """, (guild_id,))
         members = cursor.fetchall()
         
-        conn.close()
         return members
     except Exception as e:
         print(f"Error in get_clan_members: {e}")
         print(f"Clan name: {clan_name}")
         print(f"Database path: {db_path}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 async def get_all_clan_structures(db_path):
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -247,11 +261,102 @@ async def get_all_clan_structures(db_path):
         """)
         clan_structures = cursor.fetchall()
         
-        conn.close()
         return clan_structures
     except Exception as e:
         print(f"Error in get_all_clan_structures: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
+
+async def get_player_info(db_path, player_name):
+    """Get detailed information about a player"""
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get basic character info with guild name
+        query = """
+        SELECT 
+            c.char_name, 
+            c.level, 
+            c.rank, 
+            g.name as guild_name,
+            c.isAlive,
+            c.killerName,
+            c.lastTimeOnline,
+            c.lastServerTimeOnline,
+            c.id as char_id
+        FROM 
+            characters c
+        LEFT JOIN 
+            guilds g ON c.guild = g.guildId
+        WHERE 
+            c.char_name LIKE ?
+        """
+        cursor.execute(query, (f"%{player_name}%",))
+        players = cursor.fetchall()
+        
+        if not players:
+            return None
+            
+        results = []
+        
+        for player in players:
+            char_name, level, rank, guild_name, is_alive, killer_name, last_time, last_server_time, char_id = player
+            
+            # Check if player is online
+            cursor.execute("""
+                SELECT a.online 
+                FROM account a 
+                JOIN characters c ON a.user = c.playerId
+                WHERE c.char_name = ?
+            """, (char_name,))
+            online_result = cursor.fetchone()
+            online = online_result[0] if online_result else 0
+            
+            # Get position if available
+            cursor.execute("""
+                SELECT x, y, z 
+                FROM actor_position 
+                WHERE id = ?
+            """, (char_id,))
+            position = cursor.fetchone()
+            
+            # Get character stats if available
+            cursor.execute("""
+                SELECT stat_type, stat_value 
+                FROM character_stats 
+                WHERE char_id = ?
+            """, (char_id,))
+            stats = cursor.fetchall()
+            
+            # Convert epoch time to readable format
+            last_seen = datetime.fromtimestamp(last_time) if last_time else None
+            
+            player_info = {
+                "name": char_name,
+                "level": level,
+                "rank": rank,
+                "guild": guild_name,
+                "online": bool(online),
+                "alive": bool(is_alive),
+                "killer": killer_name if killer_name else None,
+                "last_seen": last_seen,
+                "position": position,
+                "stats": stats
+            }
+            
+            results.append(player_info)
+        
+        return results
+    except Exception as e:
+        print(f"Error in get_player_info: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 #-------------------------
 # Helper Functions
@@ -456,6 +561,95 @@ async def clan(ctx, *, clan_name: str):
                         await asyncio.sleep(1)  # Avoid rate limits
         else:
             await ctx.send(f"```\nNo members found for clan '{clan_name}' or clan does not exist.\n```")
+    finally:
+        # Clean up temp database
+        await cleanup_temp_db(temp_db)
+
+@bot.command()
+async def player(ctx, *, player_name: str):
+    if STRUCTURES_CHANNEL_ID != 0 and ctx.channel.id != STRUCTURES_CHANNEL_ID:
+        return
+        
+    # Check cooldown
+    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    if not can_use:
+        await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
+        return
+    
+    print(f"Looking up player: {player_name}")
+    await ctx.send(f"Searching for player '{player_name}'...")
+    
+    # Create temporary database
+    temp_db = await create_temp_db(ORIGINAL_DB)
+    
+    try:
+        player_results = await get_player_info(temp_db, player_name)
+        
+        if not player_results:
+            await ctx.send(f"```\nNo players found matching '{player_name}'.\n```")
+            return
+            
+        # Convert rank numbers to names for display
+        rank_names = {
+            0: "Recruit",
+            1: "Member",
+            2: "Officer",
+            3: "Leader",
+            None: "-"
+        }
+        
+        # If we found multiple matches, display them all
+        if len(player_results) > 1:
+            message = f"Found {len(player_results)} players matching '{player_name}':\n\n"
+            
+            for i, player in enumerate(player_results):
+                status = "🟢 Online" if player["online"] else "⚫ Offline"
+                if not player["alive"]:
+                    status = "💀 Dead"
+                
+                clan = player["guild"] if player["guild"] else "No Clan"
+                
+                message += f"{i+1}. {player['name']} (Level {player['level']}) - {clan} - {status}\n"
+            
+            await ctx.send(f"```\n{message}\n```")
+            return
+        
+        # If we have exactly one player, show detailed info
+        player = player_results[0]
+        
+        message = f"Player Information: {player['name']}\n"
+        message += "═════════════════════════════\n"
+        
+        # Status information
+        status = "🟢 Online" if player["online"] else "⚫ Offline"
+        if not player["alive"]:
+            status = f"💀 Dead (Killed by: {player['killer'] or 'Unknown'})"
+        message += f"Status: {status}\n"
+        
+        # Basic info
+        message += f"Level: {player['level']}\n"
+        
+        # Clan info
+        if player["guild"]:
+            rank_name = rank_names.get(player["rank"], f"Unknown({player['rank']})")
+            message += f"Clan: {player['guild']} ({rank_name})\n"
+        else:
+            message += "Clan: None\n"
+        
+        # Last seen
+        if player["last_seen"] and not player["online"]:
+            message += f"Last Seen: {player['last_seen'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+        
+        # Position if available
+        if player["position"]:
+            x, y, z = player["position"]
+            message += f"\nCurrent Location:\n"
+            message += f"X: {round(x, 2)}, Y: {round(y, 2)}, Z: {round(z, 2)}\n"
+            message += f"Teleport: TeleportPlayer {round(x, 2)} {round(y, 2)} {round(z+100, 2)}\n"
+        
+        # Send the message
+        await ctx.send(f"```\n{message}\n```")
+        
     finally:
         # Clean up temp database
         await cleanup_temp_db(temp_db)
