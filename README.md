@@ -10,7 +10,7 @@ This bot was designed for admins to get the below information within discord wit
 
 ## Known Issues
 - TP Player list may list recently disconnected players
-- There is a hardcoded 5min cooldown for any of the commands due to the fact the bot will copy the game DB and access data from that, running the copy process to many times will interfere with the save, and you shouldn't need so much info in quick sucession
+- There is a 5min cooldown for any of the commands due to the fact the bot will copy the game DB and access data from that, running the copy process too many times will interfere with the save, and you shouldn't need so much info in quick sucession, this can be changed in the config (use at your own peril)
 
 # Requirements
 - Python
@@ -36,3 +36,5 @@ NotificationChannelID = Channel ID from your discord where it will post the info
 AllClanStructuresRoleIds = Discord RoleID to restrict who can execute the commands
 
 MaxStructures = this is based on using !structures or !allclanstructures and will alert when reaching the threshold
+
+CommandCooldownMinutes = time in minutes when the bot will allow any command to run
