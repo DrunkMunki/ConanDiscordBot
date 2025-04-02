@@ -26,6 +26,7 @@ TP_CHANNEL_ID = int(config.get("DISCORD", "TeleportChannelId", fallback="0"))
 STRUCTURES_CHANNEL_ID = int(config.get("DISCORD", "StructuresChannelId", fallback="0"))
 MAX_STRUCTURES = int(config.get("LIMITS", "MaxStructures", fallback="5000"))
 NOTIFICATION_CHANNEL_ID = int(config.get("DISCORD", "NotificationChannelId", fallback="0"))
+COMMAND_COOLDOWN = int(config.get("LIMITS", "CommandCooldownMinutes", fallback="5"))
 ALLOWED_ROLE_IDS = [int(role_id.strip()) for role_id in 
                     config.get("DISCORD", "AllClanStructuresRoleIds", fallback="").split(",") 
                     if role_id.strip()]
@@ -451,7 +452,7 @@ async def teleport_list(ctx):
         return
     
     # Check cooldown
-    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
     if not can_use:
         await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
         return
@@ -491,7 +492,7 @@ async def structures(ctx, *, clan_name: str):
         return
     
     # Check cooldown
-    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
     if not can_use:
         await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
         return
@@ -524,7 +525,7 @@ async def allclanstructures(ctx):
         return
     
     # Check cooldown
-    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
     if not can_use:
         await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
         return
@@ -566,7 +567,7 @@ async def clan(ctx, *, clan_name: str):
         return
     
     # Check cooldown
-    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
     if not can_use:
         await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
         return
@@ -626,7 +627,7 @@ async def player(ctx, *, player_name: str):
         return
         
     # Check cooldown
-    can_use, remaining = check_cooldown(ctx.author.id, 5)
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
     if not can_use:
         await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
         return
