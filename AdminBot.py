@@ -229,14 +229,47 @@ async def get_clan_members(db_path, clan_name):
         
         # Get all characters in the guild
         cursor.execute("""
-            SELECT char_name, level, rank 
+            SELECT char_name, level, rank, id 
             FROM characters 
             WHERE guild = ? 
             ORDER BY rank DESC, char_name ASC
         """, (guild_id,))
-        members = cursor.fetchall()
+        characters = cursor.fetchall()
         
-        return members
+        # For each character, determine if they are online
+        results = []
+        for char in characters:
+            char_name, level, rank, char_id = char
+            
+            # Check online status using multiple methods
+            online = 0
+            
+            # Method 1: Check via account table using ID
+            cursor.execute("""
+                SELECT a.online 
+                FROM account a 
+                JOIN characters c ON a.id = c.playerId 
+                WHERE c.id = ?
+            """, (char_id,))
+            online_result = cursor.fetchone()
+            
+            if online_result:
+                online = online_result[0]
+            else:
+                # Method 2: Check via account table using name
+                cursor.execute("""
+                    SELECT a.online 
+                    FROM account a 
+                    JOIN characters c ON a.user = c.playerId
+                    WHERE c.id = ?
+                """, (char_id,))
+                online_result = cursor.fetchone()
+                if online_result:
+                    online = online_result[0]
+            
+            results.append((char_name, level, rank, bool(online)))
+        
+        return results
     except Exception as e:
         print(f"Error in get_clan_members: {e}")
         print(f"Clan name: {clan_name}")
@@ -548,8 +581,8 @@ async def clan(ctx, *, clan_name: str):
         members = await get_clan_members(temp_db, clan_name)
         if members is not None and len(members) > 0:
             message = f"Members in clan '{clan_name}':\n\n"
-            message += "Name                 Level   Rank\n"
-            message += "---------------------------------\n"
+            message += "Name                 Level   Rank        Status\n"
+            message += "------------------------------------------------\n"
             
             rank_names = {
                 0: "Recruit",
@@ -560,14 +593,17 @@ async def clan(ctx, *, clan_name: str):
             }
             
             for member in members:
-                name = member[0]
-                level = member[1] if member[1] is not None else "?"
-                rank_num = member[2]
+                name, level, rank_num, is_online = member
+                level = level if level is not None else "?"
                 rank_name = rank_names.get(rank_num, f"Unknown({rank_num})")
+                status = "🟢 Online" if is_online else "⚫ Offline"
                 
-                # Pad name for alignment
+                # Pad fields for alignment
                 padded_name = name.ljust(20)
-                message += f"{padded_name} {str(level).ljust(7)} {rank_name}\n"
+                padded_level = str(level).ljust(7)
+                padded_rank = rank_name.ljust(11)
+                
+                message += f"{padded_name} {padded_level} {padded_rank} {status}\n"
             
             # Split into chunks if too long (Discord has 2000 char limit)
             if len(message) <= 1990:
