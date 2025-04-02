@@ -7,6 +7,8 @@ This bot was designed for admins to get the below information within discord wit
 - Show structure count for all clans (!allclanstructures)
 - List all players within a specific clan (!clan < clan name >)
 - Get player info (Online Status, Level, Clan, Last Seen, TP location) (!player < name >)
+- Show old clans that havent logged in over 30 days: Clan Name, days since last activity, numbers of members, number of structures, name of last online member (!oldclans) 
+- Commands above can handle special characters such as chinese text
 
 ## Known Issues
 - TP Player list may list recently disconnected players
@@ -38,3 +40,5 @@ AllClanStructuresRoleIds = Discord RoleID to restrict who can execute the comman
 MaxStructures = this is based on using !structures or !allclanstructures and will alert when reaching the threshold
 
 CommandCooldownMinutes = time in minutes when the bot will allow any command to run
+
+InactiveDays = number in IRL days when to consider a clan old enough to show in this command
