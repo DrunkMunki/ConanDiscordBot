@@ -310,11 +310,30 @@ async def get_player_info(db_path, player_name):
             cursor.execute("""
                 SELECT a.online 
                 FROM account a 
-                JOIN characters c ON a.user = c.playerId
-                WHERE c.char_name = ?
-            """, (char_name,))
+                JOIN characters c ON a.id = c.playerId 
+                WHERE c.id = ?
+            """, (char_id,))
             online_result = cursor.fetchone()
-            online = online_result[0] if online_result else 0
+            
+            # Alternative method if the above doesn't find a result
+            if not online_result:
+                cursor.execute("""
+                    SELECT a.online 
+                    FROM account a 
+                    JOIN characters c ON a.user = c.playerId
+                    WHERE c.id = ?
+                """, (char_id,))
+                online_result = cursor.fetchone()
+            
+            # Try a direct approach as fallback
+            if not online_result:
+                cursor.execute("""
+                    SELECT 1 FROM actor_position WHERE id = ?
+                """, (char_id,))
+                position_exists = cursor.fetchone() is not None
+                online = 1 if position_exists else 0
+            else:
+                online = online_result[0] if online_result else 0
             
             # Get position if available
             cursor.execute("""
