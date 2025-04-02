@@ -5,6 +5,7 @@ import os
 import shutil
 import asyncio
 import configparser
+import time
 from datetime import datetime, timedelta
 
 # Read configuration
@@ -27,6 +28,7 @@ STRUCTURES_CHANNEL_ID = int(config.get("DISCORD", "StructuresChannelId", fallbac
 MAX_STRUCTURES = int(config.get("LIMITS", "MaxStructures", fallback="5000"))
 NOTIFICATION_CHANNEL_ID = int(config.get("DISCORD", "NotificationChannelId", fallback="0"))
 COMMAND_COOLDOWN = int(config.get("LIMITS", "CommandCooldownMinutes", fallback="5"))
+INACTIVE_DAYS = int(config.get("LIMITS", "InactiveDays", fallback="30"))
 ALLOWED_ROLE_IDS = [int(role_id.strip()) for role_id in 
                     config.get("DISCORD", "AllClanStructuresRoleIds", fallback="").split(",") 
                     if role_id.strip()]
@@ -411,6 +413,84 @@ async def get_player_info(db_path, player_name):
         if conn:
             conn.close()
 
+async def get_inactive_clans(db_path, days_inactive):
+    """Get clans where all members have been inactive for at least the specified days"""
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Calculate the cutoff timestamp
+        current_time = int(time.time())
+        cutoff_time = current_time - (days_inactive * 24 * 60 * 60)
+        
+        # First get all valid clans
+        cursor.execute("SELECT guildId, name FROM guilds")
+        guilds = cursor.fetchall()
+        
+        results = []
+        
+        # Process each guild individually
+        for guild_id, guild_name in guilds:
+            # Get the most recent character activity in this clan
+            cursor.execute("""
+                SELECT MAX(lastTimeOnline), COUNT(*) 
+                FROM characters 
+                WHERE guild = ?
+            """, (guild_id,))
+            result = cursor.fetchone()
+            latest_activity, member_count = result
+            
+            # Only include clans that have been inactive for the specified days
+            if latest_activity and latest_activity < cutoff_time:
+                # Count structures
+                cursor.execute("""
+                    SELECT COUNT(*)
+                    FROM building_instances bi
+                    JOIN buildings b ON bi.object_id = b.object_id
+                    WHERE b.owner_id = ?
+                """, (guild_id,))
+                structure_count = cursor.fetchone()[0]
+                
+                # Get the most recently active character in this clan
+                cursor.execute("""
+                    SELECT char_name, lastTimeOnline
+                    FROM characters
+                    WHERE guild = ?
+                    ORDER BY lastTimeOnline DESC
+                    LIMIT 1
+                """, (guild_id,))
+                
+                recent_char = cursor.fetchone()
+                recent_char_name = recent_char[0] if recent_char else "Unknown"
+                
+                # Convert timestamp to datetime and calculate days
+                last_active_date = datetime.fromtimestamp(latest_activity)
+                days_since = (datetime.now() - last_active_date).days
+                
+                clan_info = {
+                    "id": guild_id,
+                    "name": guild_name,
+                    "last_active": last_active_date,
+                    "days_inactive": days_since,
+                    "member_count": member_count,
+                    "structure_count": structure_count,
+                    "last_active_member": recent_char_name
+                }
+                
+                results.append(clan_info)
+        
+        # Sort by most inactive first
+        results.sort(key=lambda x: x["days_inactive"], reverse=True)
+        
+        return results
+    except Exception as e:
+        print(f"Error in get_inactive_clans: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
 #-------------------------
 # Helper Functions
 #-------------------------
@@ -710,8 +790,76 @@ async def player(ctx, *, player_name: str):
         # Clean up temp database
         await cleanup_temp_db(temp_db)
 
+@bot.command()
+@has_allowed_role()
+async def oldclans(ctx):
+    if STRUCTURES_CHANNEL_ID != 0 and ctx.channel.id != STRUCTURES_CHANNEL_ID:
+        return
+    
+    # Check cooldown
+    can_use, remaining = check_cooldown(ctx.author.id, COMMAND_COOLDOWN)
+    if not can_use:
+        await ctx.send(f"Command on cooldown. Try again in {remaining:.1f} minutes.")
+        return
+    
+    await ctx.send(f"Searching for clans inactive for {INACTIVE_DAYS}+ days...")
+    
+    # Create temporary database
+    temp_db = await create_temp_db(ORIGINAL_DB)
+    
+    try:
+        inactive_clans = await get_inactive_clans(temp_db, INACTIVE_DAYS)
+        
+        if not inactive_clans:
+            await ctx.send(f"```\nNo clans found that have been inactive for {INACTIVE_DAYS}+ days.\n```")
+            return
+            
+        message = f"Clans Inactive for {INACTIVE_DAYS}+ Days:\n\n"
+        message += "Clan Name                    Days     Members  Structures  Last Active Member\n"
+        message += "----------------------------------------------------------------------------\n"
+        
+        for clan in inactive_clans:
+            name = clan["name"] or "Unknown"
+            days = clan["days_inactive"]
+            members = clan["member_count"]
+            structures = clan["structure_count"] if clan["structure_count"] is not None else 0
+            last_member = clan["last_active_member"]
+            
+            # Truncate or pad clan name for alignment
+            if len(name) > 28:
+                name = name[:25] + "..."
+            else:
+                name = name.ljust(28)
+                
+            # Format days
+            days_str = str(days).ljust(8)
+            
+            # Format members and structures
+            members_str = str(members).ljust(8)
+            structures_str = str(structures).ljust(11)
+            
+            message += f"{name} {days_str} {members_str} {structures_str} {last_member}\n"
+        
+        # Split into chunks if too long (Discord has 2000 char limit)
+        if len(message) <= 1990:
+            await ctx.send(f"```\n{message}\n```")
+        else:
+            chunks = [message[i:i+1990] for i in range(0, len(message), 1990)]
+            for i, chunk in enumerate(chunks):
+                await ctx.send(f"```\n{chunk}\n```")
+                if i < len(chunks) - 1:
+                    await asyncio.sleep(1)  # Avoid rate limits
+    finally:
+        # Clean up temp database
+        await cleanup_temp_db(temp_db)
+
 @allclanstructures.error
 async def allclanstructures_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("You don't have permission to use this command.")
+
+@oldclans.error
+async def oldclans_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("You don't have permission to use this command.")
 
